@@ -63,6 +63,8 @@ jobs:
             "docs/交付/审核员指南.md"
             "docs/交付/企业级PR流水.md"
             "docs/交付/任务计分板.md"
+            "docs/交付/实训基地任务汇总表.md"
+            "docs/交付/实训基地协作指南.md"
             "docs/designs/README.md"
             "docs/designs/_TEMPLATE.md"
             "scripts/pr_delivery_check.py"

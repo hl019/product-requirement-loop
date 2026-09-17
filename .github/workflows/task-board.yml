@@ -260,7 +260,7 @@ jobs:
                 '',
                 `🔒 **已批准接取 @${user}**（Design PR #${designByUser.number} 已合并）。`,
                 '',
-                `**接取人栏已自动写入：@${user}**（总览 #7 / 任务列表 / 仪表盘将刷新）。`,
+                `**接取人栏已自动写入：@${user}**（[实训基地任务汇总表](https://github.com/hongwei-2026/product-requirement-loop/blob/main/docs/%E4%BA%A4%E4%BB%98/%E5%AE%9E%E8%AE%AD%E5%9F%BA%E5%9C%B0%E4%BB%BB%E5%8A%A1%E6%B1%87%E6%80%BB%E8%A1%A8.md) / 总览 #7 / 仪表盘将刷新）。`,
                 '',
                 '请提交 Implementation PR：`Fixes #' + issue_number + '`。',
                 '**交付物三件套**：代码 + **演示视频链接** + **截图≥2**。',
@@ -363,6 +363,7 @@ jobs:
             "docs/交付/任务认领状态.json" \
             "docs/交付/任务仪表盘.md" \
             "docs/交付/任务列表.md" \
+            "docs/交付/实训基地任务汇总表.md" \
             "docs/交付/任务总览-issue7.body.md" \
             "docs/dashboard/index.html"
           if git diff --cached --quiet; then

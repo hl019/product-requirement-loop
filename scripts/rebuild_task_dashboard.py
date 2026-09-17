@@ -17,6 +17,7 @@ SCORE = ROOT / "docs" / "交付" / "任务计分板.md"
 CLAIMS = ROOT / "docs" / "交付" / "任务认领状态.json"
 OUT = ROOT / "docs" / "交付" / "任务仪表盘.md"
 LIST = ROOT / "docs" / "交付" / "任务列表.md"
+BASE = ROOT / "docs" / "交付" / "实训基地任务汇总表.md"
 HUB = ROOT / "docs" / "交付" / "任务总览-issue7.body.md"
 HTML = ROOT / "docs" / "dashboard" / "index.html"
 
@@ -201,13 +202,101 @@ def build_md(rows: list[tuple[str, str, int, str]], claims: dict) -> str:
     return "\n".join(lines)
 
 
+def build_base_summary_md(claims: dict) -> str:
+    """实训基地对外总看板（群聊约定文件名）。接取人仅 /accept 后写入。"""
+    now = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
+    lines = [
+        "# 实训基地任务汇总表",
+        "",
+        "> **实训基地唯一总看板**（接取人自动同步，勿手改表格）。  ",
+        f"> 上次同步：{now} · 数据源：[任务认领状态.json](./任务认领状态.json)",
+        "",
+        "## 怎么用（最短路径）",
+        "",
+        "1. 读 [实训基地协作指南.md](./实训基地协作指南.md)  ",
+        f"2. 在目标任务 Issue 评论 `/claim`（仅意向，**本表接取人栏仍为空**）  ",
+        "3. 交 Design：`docs/designs/#N-….md` → 开 **Design** PR → 邮件 `feizi_050920@qq.com`  ",
+        "4. 维护者 **Merge** Design PR 后，在 Issue 评论 `/accept @你的ID`  ",
+        "5. **本表「接取人」列自动写入你的 GitHub ID**  ",
+        "6. 再开 Implementation PR（代码 + 演示视频链接 + 截图≥2）→ 四人 Approve → `/score`",
+        "",
+        "## 硬性规则",
+        "",
+        "| 规则 | 说明 |",
+        "|------|------|",
+        "| 一账号一题 | 同时只能有 1 个进行中（意向或已锁定） |",
+        "| 接取人写入时机 | 仅 Design **已合并** 且维护者 `/accept @ID` 之后 |",
+        "| 30 天新鲜度 | 关联 Design/Impl PR 超 30 天无更新 → **自动释放**，接取人清空 |",
+        "| 放弃 | `/cancel` 或 `/release` |",
+        "",
+        f"总入口 Issue：[#7]({ISSUE_BASE}/7) · 协作指南：[实训基地协作指南.md](./实训基地协作指南.md) · Design 落库：[../designs/](../designs/)",
+        "",
+        "## 基础 / 进阶",
+        "",
+        "| 难度 | 积分 | Issue | 标题 | 接取人 |",
+        "|------|------|-------|------|--------|",
+    ]
+    for t in TASKS:
+        if t["tier"] != "base":
+            continue
+        n = t["num"]
+        lines.append(
+            f"| {t['diff']} | {t['pts']} | [#{n}]({ISSUE_BASE}/{n}) | [{t['short']}]({ISSUE_BASE}/{n}) | {claimant_md(claims, n)} |"
+        )
+    lines += [
+        "",
+        "## 特难扩展（量潮对齐）",
+        "",
+        "| 难度 | 积分 | Issue | 标题 | 接取人 |",
+        "|------|------|-------|------|--------|",
+    ]
+    for t in TASKS:
+        if t["tier"] != "extreme":
+            continue
+        n = t["num"]
+        lines.append(
+            f"| {t['diff']} | {t['pts']} | [#{n}]({ISSUE_BASE}/{n}) | [{t['short']}]({ISSUE_BASE}/{n}) | {claimant_md(claims, n)} |"
+        )
+    lines += [
+        "",
+        "## 进行中意向（已 /claim、尚未 /accept）",
+        "",
+        "| Issue | 意向人 | 状态 | 更新时间 |",
+        "|-------|--------|------|----------|",
+    ]
+    pending = [
+        (k, v)
+        for k, v in claims.items()
+        if isinstance(v, dict) and v.get("status") == "claim-pending" and v.get("user")
+    ]
+    if not pending:
+        lines.append("| — | 当前无待 accept 意向 | — | — |")
+    else:
+        for k, v in sorted(pending, key=lambda x: int(x[0])):
+            u = v["user"]
+            lines.append(
+                f"| [#{k}]({ISSUE_BASE}/{k}) | [@{u}](https://github.com/{u}) | 待 Design 合并 + `/accept` | {v.get('updated', '—')} |"
+            )
+    lines += [
+        "",
+        "## 维护与审核",
+        "",
+        "- 维护者：@hongwei-2026（唯一可 `/accept`）  ",
+        "- 必审人：`hongwei-2026` · `hl019` · `Jerrybao99` · `likexin105`（PR 须四人全部 Approve）  ",
+        "- 同学细则：[任务贡献指南.md](./任务贡献指南.md) · 审核员：[审核员指南.md](./审核员指南.md)  ",
+        "- 同步脚本：`scripts/rebuild_task_dashboard.py`（由 `/accept` `/cancel` `/score` 与 30 天释放流水触发）",
+        "",
+    ]
+    return "\n".join(lines)
+
+
 def build_list_md(claims: dict) -> str:
     now = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
     lines = [
         "# 实训任务列表（Issue 索引）",
         "",
         "维护者：[@hongwei-2026](https://github.com/hongwei-2026)  ",
-        "流程：[任务贡献指南.md](./任务贡献指南.md) · **仪表盘**：[任务仪表盘.md](./任务仪表盘.md) · [HTML](../dashboard/index.html) · 计分板：[任务计分板.md](./任务计分板.md)",
+        "**基地总看板：** [实训基地任务汇总表.md](./实训基地任务汇总表.md) · 流程：[实训基地协作指南.md](./实训基地协作指南.md) · [任务贡献指南.md](./任务贡献指南.md) · **仪表盘**：[任务仪表盘.md](./任务仪表盘.md) · 计分板：[任务计分板.md](./任务计分板.md)",
         "",
         f"> 自动同步接取人：{now}（数据源 [任务认领状态.json](./任务认领状态.json)）  ",
         "> 接取：`/claim` → Design **Merge** → `/accept`（接取人栏才写入）→ Impl（代码+视频+截图）→ `/score`。  ",
@@ -263,10 +352,10 @@ def build_issue7_body(claims: dict) -> str:
         "维护者：@hongwei-2026  ",
         "必审人（PR 须 **四人全部 Approve**）：@hongwei-2026 @hl019 @Jerrybao99 @likexin105  ",
         "",
+        "- **基地总看板**：[实训基地任务汇总表](https://github.com/hongwei-2026/product-requirement-loop/blob/main/docs/%E4%BA%A4%E4%BB%98/%E5%AE%9E%E8%AE%AD%E5%9F%BA%E5%9C%B0%E4%BB%BB%E5%8A%A1%E6%B1%87%E6%80%BB%E8%A1%A8.md)",
+        "- **协作指南（User Guide）**：[实训基地协作指南](https://github.com/hongwei-2026/product-requirement-loop/blob/main/docs/%E4%BA%A4%E4%BB%98/%E5%AE%9E%E8%AE%AD%E5%9F%BA%E5%9C%B0%E5%8D%8F%E4%BD%9C%E6%8C%87%E5%8D%97.md)",
         "- 同学：[任务贡献指南](https://github.com/hongwei-2026/product-requirement-loop/blob/main/docs/%E4%BA%A4%E4%BB%98/%E4%BB%BB%E5%8A%A1%E8%B4%A1%E7%8C%AE%E6%8C%87%E5%8D%97.md)",
         "- **审核员**：[审核员指南](https://github.com/hongwei-2026/product-requirement-loop/blob/main/docs/%E4%BA%A4%E4%BB%98/%E5%AE%A1%E6%A0%B8%E5%91%98%E6%8C%87%E5%8D%97.md)",
-        "- 汇报稿：[实训贡献机制-同学汇报稿](https://github.com/hongwei-2026/product-requirement-loop/blob/main/docs/%E4%BA%A4%E4%BB%98/%E5%AE%9E%E8%AE%AD%E8%B4%A1%E7%8C%AE%E6%9C%BA%E5%88%B6-%E5%90%8C%E5%AD%A6%E6%B1%87%E6%8A%A5%E7%A8%BF.md)",
-        "- 任务列表：[任务列表](https://github.com/hongwei-2026/product-requirement-loop/blob/main/docs/%E4%BA%A4%E4%BB%98/%E4%BB%BB%E5%8A%A1%E5%88%97%E8%A1%A8.md)",
         "- Design 提交位：[docs/designs](https://github.com/hongwei-2026/product-requirement-loop/tree/main/docs/designs)",
         "",
         "## 硬性规则",
@@ -274,12 +363,12 @@ def build_issue7_body(claims: dict) -> str:
         "1. **同一 GitHub 账号同时只能接 1 个进行中任务**（`/claim` 或已 `/accept` 锁定期间）。换题先 `/cancel`。",
         "2. 实现 PR 必须：**代码 + 演示视频链接 + 截图≥2**。",
         "3. Design 方案落库：`docs/designs/#N-….md`。",
-        "4. **接取人**列：仅在维护者 **合并 Design PR 之后** 评论 `/accept @ID` 才写入（单独 `/claim` 不会写）。",
+        "4. **接取人**列（汇总表 / 本 Issue）：仅在维护者 **合并 Design PR 之后** 评论 `/accept @ID` 才写入（单独 `/claim` 不会写）。",
         "5. **30 天无关联 PR 更新 → 自动释放**（接取人清空，任务重开）。",
         "",
         f"_接取人表上次同步：{now}_",
         "",
-        "## 子任务列表",
+        "## 子任务列表（与汇总表同步）",
         "",
         "### 基础 / 进阶",
         "",
@@ -379,7 +468,7 @@ def build_html(rows: list, claims: dict) -> str:
 <body>
 <main>
   <h1>实训任务仪表盘</h1>
-  <p class="sub">{now} · <a href="{ISSUE_BASE}/7">#7 总入口</a>（接取人随 /claim 自动更新）</p>
+  <p class="sub">{now} · <a href="{ISSUE_BASE}/7">#7</a> · <a href="../交付/实训基地任务汇总表.md">基地汇总表</a>（接取人在 /accept 后写入）</p>
   <section class="card"><h2>积分排行榜</h2>
     <table><thead><tr><th>#</th><th>GitHub</th><th>总分</th></tr></thead><tbody>{rank_rows}</tbody></table>
   </section>
@@ -402,11 +491,13 @@ def main() -> int:
     claims = load_claims()
     OUT.write_text(build_md(rows, claims), encoding="utf-8")
     LIST.write_text(build_list_md(claims), encoding="utf-8")
+    BASE.write_text(build_base_summary_md(claims), encoding="utf-8")
     HUB.write_text(build_issue7_body(claims), encoding="utf-8")
     HTML.parent.mkdir(parents=True, exist_ok=True)
     HTML.write_text(build_html(rows, claims), encoding="utf-8")
     print(f"[OK] {OUT.relative_to(ROOT)}")
     print(f"[OK] {LIST.relative_to(ROOT)}")
+    print(f"[OK] {BASE.relative_to(ROOT)}")
     print(f"[OK] {HUB.relative_to(ROOT)}")
     print(f"[OK] {HTML.relative_to(ROOT)}")
     return 0

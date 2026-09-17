@@ -171,6 +171,7 @@ jobs:
             "docs/交付/任务认领状态.json" \
             "docs/交付/任务仪表盘.md" \
             "docs/交付/任务列表.md" \
+            "docs/交付/实训基地任务汇总表.md" \
             "docs/交付/任务总览-issue7.body.md" \
             "docs/dashboard/index.html"
           if git diff --cached --quiet; then
