@@ -1,6 +1,7 @@
 name: Required reviewers (all must approve)
 
-# 强制：hongwei-2026 + HL019 + Jerrybao99 + Likexin105 全部 Approve 后，本检查才绿。
+# 强制：必审人全部 Approve 后本检查才绿。
+# PR 作者若在名单内会被排除（GitHub 不允许自我 Approve）。
 on:
   pull_request:
     types: [opened, synchronize, reopened, ready_for_review]
@@ -9,7 +10,8 @@ on:
 
 permissions:
   contents: read
-  pull-requests: read
+  pull-requests: write
+  issues: write
   checks: write
   statuses: write
 
@@ -21,7 +23,7 @@ jobs:
         uses: actions/github-script@v7
         with:
           script: |
-            const REQUIRED = ['hongwei-2026', 'hl019', 'Jerrybao99', 'likexin105'];
+            const REQUIRED_ALL = ['hongwei-2026', 'hl019', 'Jerrybao99', 'likexin105'];
             const owner = context.repo.owner;
             const repo = context.repo.repo;
             const pull_number =
@@ -34,8 +36,18 @@ jobs:
 
             const { data: pr } = await github.rest.pulls.get({ owner, repo, pull_number });
             const headSha = pr.head.sha;
+            const author = (pr.user?.login || '').toLowerCase();
 
-            // Collect latest review per user (IGNORE comments/pending; keep APPROVED/CHANGES_REQUESTED/DISMISSED)
+            // 作者不能 Approve 自己的 PR → 从必审名单排除
+            const REQUIRED = REQUIRED_ALL.filter(u => u.toLowerCase() !== author);
+            if (REQUIRED.length < REQUIRED_ALL.length) {
+              core.info(`Excluded PR author @${pr.user.login} from required reviewers (cannot self-approve).`);
+            }
+            if (!REQUIRED.length) {
+              core.setFailed('No required reviewers left after excluding author — check REQUIRED list.');
+              return;
+            }
+
             const reviews = await github.paginate(github.rest.pulls.listReviews, {
               owner, repo, pull_number, per_page: 100
             });
@@ -43,7 +55,6 @@ jobs:
             for (const r of reviews) {
               const login = r.user?.login;
               if (!login) continue;
-              // listReviews is chronological; last write wins
               latest.set(login.toLowerCase(), { state: r.state, user: login });
             }
 
@@ -60,30 +71,40 @@ jobs:
               }
             }
 
+            const sticky = async (body) => {
+              try {
+                const comments = await github.paginate(github.rest.issues.listComments, {
+                  owner, repo, issue_number: pull_number, per_page: 100
+                });
+                const prev = comments.find(c => (c.body || '').includes('必审人门禁'));
+                if (prev) {
+                  await github.rest.issues.updateComment({ owner, repo, comment_id: prev.id, body });
+                } else {
+                  await github.rest.issues.createComment({ owner, repo, issue_number: pull_number, body });
+                }
+              } catch (e) {
+                // fork PR：GITHUB_TOKEN 只读，发评论会 403 —— 不因此判红，写入 Job Summary
+                core.warning(`Sticky comment skipped (${e.status || e.message}). Common on fork PRs.`);
+                await core.summary.addHeading('必审人门禁').addRaw(body).write();
+              }
+            };
+
             const lines = [
               '## 必审人门禁',
               '',
-              '下列账号必须全部对 **当前 head commit** 给出 **APPROVED** 才算审查通过：',
+              '下列账号必须对 **当前 head commit** 给出 **APPROVED**（PR 作者已自动排除，因无法自我 Approve）：',
               REQUIRED.map(u => `- @${u}`).join('\n'),
+              author ? `\n_已排除作者：@${pr.user.login}_` : '',
               '',
             ];
+
             if (missing.length || bad.length) {
               lines.push('### 尚未满足');
               if (missing.length) lines.push('- 未审查/无批准：' + missing.map(u => '@' + u).join(', '));
               if (bad.length) lines.push('- 状态非 APPROVED：' + bad.join(', '));
               lines.push('');
               lines.push('_推送新 commit 后，旧批准可能作废，需重新 Approve。_');
-              const body = lines.join('\n');
-              // sticky comment
-              const comments = await github.paginate(github.rest.issues.listComments, {
-                owner, repo, issue_number: pull_number, per_page: 100
-              });
-              const prev = comments.find(c => (c.body || '').includes('必审人门禁'));
-              if (prev) {
-                await github.rest.issues.updateComment({ owner, repo, comment_id: prev.id, body });
-              } else {
-                await github.rest.issues.createComment({ owner, repo, issue_number: pull_number, body });
-              }
+              await sticky(lines.filter(Boolean).join('\n'));
               core.setFailed('Required reviewers have not all APPROVED yet.');
               return;
             }
@@ -91,16 +112,9 @@ jobs:
             const okBody = [
               '## 必审人门禁',
               '',
-              `✅ 四位必审人均已 APPROVED（head \`${headSha.slice(0, 7)}\`）。`,
+              `✅ 所需必审人均已 APPROVED（head \`${headSha.slice(0, 7)}\`）。`,
               REQUIRED.map(u => `- @${u}`).join('\n'),
-            ].join('\n');
-            const comments = await github.paginate(github.rest.issues.listComments, {
-              owner, repo, issue_number: pull_number, per_page: 100
-            });
-            const prev = comments.find(c => (c.body || '').includes('必审人门禁'));
-            if (prev) {
-              await github.rest.issues.updateComment({ owner, repo, comment_id: prev.id, body: okBody });
-            } else {
-              await github.rest.issues.createComment({ owner, repo, issue_number: pull_number, body: okBody });
-            }
+              author ? `\n_已排除作者：@${pr.user.login}_` : '',
+            ].filter(Boolean).join('\n');
+            await sticky(okBody);
             core.info('All required reviewers approved.');

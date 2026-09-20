@@ -417,18 +417,23 @@ jobs:
               '',
               '审核员文档：`docs/交付/审核员指南.md` · Design 提交位：`docs/designs/`',
             ].join('\n');
-            const comments = await github.paginate(github.rest.issues.listComments, {
-              owner: context.repo.owner, repo: context.repo.repo, issue_number: pr_number, per_page: 100
-            });
-            const prev = comments.find(c => (c.body || '').includes('Enterprise PR 套件'));
-            if (prev) {
-              await github.rest.issues.updateComment({
-                owner: context.repo.owner, repo: context.repo.repo, comment_id: prev.id, body
+            try {
+              const comments = await github.paginate(github.rest.issues.listComments, {
+                owner: context.repo.owner, repo: context.repo.repo, issue_number: pr_number, per_page: 100
               });
-            } else {
-              await github.rest.issues.createComment({
-                owner: context.repo.owner, repo: context.repo.repo, issue_number: pr_number, body
-              });
+              const prev = comments.find(c => (c.body || '').includes('Enterprise PR 套件'));
+              if (prev) {
+                await github.rest.issues.updateComment({
+                  owner: context.repo.owner, repo: context.repo.repo, comment_id: prev.id, body
+                });
+              } else {
+                await github.rest.issues.createComment({
+                  owner: context.repo.owner, repo: context.repo.repo, issue_number: pr_number, body
+                });
+              }
+            } catch (e) {
+              core.warning(`Enterprise sticky comment skipped (${e.status || e.message}). Common on fork PRs.`);
+              await core.summary.addHeading('Enterprise PR 套件').addRaw(body).write();
             }
             const failed = [results.classify, results.delivery, designStatus, results.scope, results.lock]
               .some(r => r === 'failure');
