@@ -108,17 +108,22 @@ jobs:
               '_工作流：`task PR gate + auto review`_'
             ].filter(Boolean).join('\n');
 
-            // avoid spam: update previous bot comment if exists
-            const comments = await github.paginate(github.rest.issues.listComments, {
-              owner: context.repo.owner, repo: context.repo.repo, issue_number: pr.number, per_page: 100
-            });
-            const prev = comments.find(c => (c.body || '').includes('任务自动审核助手'));
-            if (prev) {
-              await github.rest.issues.updateComment({
-                owner: context.repo.owner, repo: context.repo.repo, comment_id: prev.id, body
+            try {
+              const comments = await github.paginate(github.rest.issues.listComments, {
+                owner: context.repo.owner, repo: context.repo.repo, issue_number: pr.number, per_page: 100
               });
-            } else {
-              await github.rest.issues.createComment({
-                owner: context.repo.owner, repo: context.repo.repo, issue_number: pr.number, body
-              });
+              const prev = comments.find(c => (c.body || '').includes('任务自动审核助手'));
+              if (prev) {
+                await github.rest.issues.updateComment({
+                  owner: context.repo.owner, repo: context.repo.repo, comment_id: prev.id, body
+                });
+              } else {
+                await github.rest.issues.createComment({
+                  owner: context.repo.owner, repo: context.repo.repo, issue_number: pr.number, body
+                });
+              }
+            } catch (e) {
+              // fork PR 上 GITHUB_TOKEN 只读 → 发评论 403；文档/门禁已在前面步骤跑过，不因评论失败判红
+              core.warning(`AI checklist comment skipped (${e.status || e.message}). Common on fork PRs with read-only token.`);
+              await core.summary.addHeading('任务自动审核助手（清单）').addRaw(body).write();
             }

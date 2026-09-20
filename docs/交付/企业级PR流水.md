@@ -38,6 +38,13 @@
 | `/recheck` `/rerun` `/rerun-checks` | **PR 评论**单独一行 | 重跑 Enterprise PR 套件 |
 | `/claim` `/accept` `/cancel` `/score` | **Issue 评论** | 任务板（见 task-board.yml） |
 
+## Fork PR / 必审人本人提 PR
+
+| 情况 | 行为 |
+|------|------|
+| 必审人是 PR 作者 | `Required reviewers` **自动排除作者**（无法自我 Approve） |
+| Fork 来的 PR | 机器人发评论可能 403；门禁以 Checks / Job Summary 为准，**不因评论失败判文档红** |
+
 ## 停滞自动释放（30 天）
 
 | 项 | 说明 |
