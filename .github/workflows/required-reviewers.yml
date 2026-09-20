@@ -13,7 +13,6 @@ permissions:
   issues: write
   checks: write
   statuses: write
-  reactions: write
 
 jobs:
   all-reviewers:
