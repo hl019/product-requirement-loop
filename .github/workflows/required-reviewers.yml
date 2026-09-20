@@ -2,8 +2,10 @@ name: Required reviewers (all must approve)
 
 # 强制：必审人全部 Approve 后本检查才绿。
 # PR 作者若在名单内会被排除（GitHub 不允许自我 Approve）。
+# 使用 pull_request_target：始终跑 base（main）上的 workflow，且 fork PR 可写评论。
+# 本 job 只调 GitHub API，不 checkout / 不执行 PR 代码。
 on:
-  pull_request:
+  pull_request_target:
     types: [opened, synchronize, reopened, ready_for_review]
   pull_request_review:
     types: [submitted, dismissed, edited]
