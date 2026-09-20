@@ -1,19 +1,23 @@
 name: Task PR gate + auto review
 
+# pull_request_target：fork PR 也用 main 上的门禁定义 + 可写评论。
+# checkout 仅取 PR head 做静态校验脚本；勿在此执行来自 PR 的任意构建/安装钩子之外的不可信逻辑。
 on:
-  pull_request:
+  pull_request_target:
     types: [opened, synchronize, reopened, ready_for_review]
 
 permissions:
   contents: read
   pull-requests: write
-  issues: read
+  issues: write
 
 jobs:
   gate:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
 
       - uses: actions/setup-python@v5
         with:
