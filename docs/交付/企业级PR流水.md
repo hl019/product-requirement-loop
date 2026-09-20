@@ -43,7 +43,7 @@
 | 情况 | 行为 |
 |------|------|
 | 必审人是 PR 作者 | `Required reviewers` **自动排除作者**（无法自我 Approve） |
-| Fork 来的 PR | `gate` / `all-reviewers` 走 `pull_request_target`（始终用本仓 main）；评论失败只警告不判红 |
+| Fork 来的 PR | `all-reviewers` 走 `pull_request_target`；`gate` 仍走 `pull_request`（校验 PR 代码），评论 403 只警告。fork 过旧时 maintainer **Update branch** |
 
 ## 停滞自动释放（30 天）
 
