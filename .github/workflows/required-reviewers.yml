@@ -2,7 +2,7 @@ name: Required reviewers (all must approve)
 
 # 必审人在 PR 评论单独一行发 `/通过`（全员通过后门禁绿）。
 # `/驳回` 可撤回或反对。作者自动排除；新 push 后须对当前 head 重新 `/通过`。
-# 状态写在 Check / Job Summary，不刷屏 sticky。
+# 进度写在 PR 置顶 sticky 评论（同一条更新，不刷屏）。
 on:
   pull_request_target:
     types: [opened, synchronize, reopened, ready_for_review]
@@ -28,6 +28,7 @@ jobs:
             const REQUIRED_ALL = ['hongwei-2026', 'hl019', 'Jerrybao99', 'likexin105'];
             const PASS = new Set(['通过', 'approve', 'lgtm', 'ack']);
             const FAIL = new Set(['驳回', 'reject', 'changes', 'deny']);
+            const MARKER = '<!-- required-reviewers-progress -->';
 
             const owner = context.repo.owner;
             const repo = context.repo.repo;
@@ -39,6 +40,15 @@ jobs:
             if (!pull_number) {
               core.info('Not a pull request event — skip');
               return;
+            }
+
+            // 忽略 bot 对自己 sticky 的编辑，避免循环
+            if (context.eventName === 'issue_comment') {
+              const body = context.payload.comment?.body || '';
+              if (body.includes(MARKER)) {
+                core.info('Ignore sticky progress comment event');
+                return;
+              }
             }
 
             const { data: pr } = await github.rest.pulls.get({ owner, repo, pull_number });
@@ -58,7 +68,6 @@ jobs:
               return;
             }
 
-            // 合并区 pending reviews（排除作者）
             try {
               await github.rest.pulls.requestReviewers({
                 owner, repo, pull_number, reviewers: REQUIRED
@@ -77,16 +86,19 @@ jobs:
             const parseCmd = (body) => {
               const lines = (body || '').split(/\r?\n/).map(l => l.trim()).filter(Boolean);
               for (const line of lines) {
-                const m = line.match(/^\/(通过|驳回|approve|lgtm|ack|reject|changes|deny)\b/i);
+                // 允许 /通过 或单独一行「通过」
+                let m = line.match(/^\/(通过|驳回|approve|lgtm|ack|reject|changes|deny)\b/i);
+                if (!m && /^(通过|驳回|approve|lgtm|ack|reject|changes|deny)$/i.test(line)) {
+                  m = [line, line];
+                }
                 if (!m) continue;
                 const key = m[1].toLowerCase();
-                if (PASS.has(key) || key === '通过') return 'pass';
-                if (FAIL.has(key) || key === '驳回') return 'fail';
+                if (PASS.has(key)) return 'pass';
+                if (FAIL.has(key)) return 'fail';
               }
               return null;
             };
 
-            // 若本事件是评论：给作者乱发 /通过 一个提示；给有效命令加 reaction
             if (context.eventName === 'issue_comment') {
               const c = context.payload.comment;
               const actor = (c.user?.login || '').toLowerCase();
@@ -103,7 +115,7 @@ jobs:
                   try {
                     await github.rest.issues.createComment({
                       owner, repo, issue_number: pull_number,
-                      body: `⛔ @${c.user.login} 不在必审名单，\`/${cmd === 'pass' ? '通过' : '驳回'}\` 不计入门禁。`
+                      body: `⛔ @${c.user.login} 不在必审名单，票不计入。`
                     });
                   } catch (_) {}
                 } else {
@@ -120,15 +132,17 @@ jobs:
               owner, repo, issue_number: pull_number, per_page: 100
             });
 
-            // 每人最新一票；仅统计 head 提交时间之后的评论（新 push 需重投）
-            const latest = new Map(); // loginLower -> { state, at, user }
+            const latest = new Map();
             for (const c of comments) {
               const login = c.user?.login;
-              if (!login || login.endsWith('[bot]')) continue;
+              if (!login) continue;
+              if ((c.body || '').includes(MARKER)) continue;
+              if (login.endsWith('[bot]') || login === 'github-actions[bot]') continue;
               const cmd = parseCmd(c.body);
               if (!cmd) continue;
               const at = new Date(c.updated_at || c.created_at);
-              if (at < headTime) continue; // 旧 head 上的票作废
+              // 允许 2s 时钟误差；新 push 之前的票仍作废
+              if (at.getTime() + 2000 < headTime.getTime()) continue;
               const key = login.toLowerCase();
               const prev = latest.get(key);
               if (!prev || at >= prev.at) {
@@ -136,40 +150,82 @@ jobs:
               }
             }
 
+            // 本事件刚投的票若因分页延迟未进 list，直接合并进去
+            if (context.eventName === 'issue_comment') {
+              const c = context.payload.comment;
+              const cmd = parseCmd(c.body);
+              const actor = (c.user?.login || '').toLowerCase();
+              if (cmd && REQUIRED.map(u => u.toLowerCase()).includes(actor) && actor !== author) {
+                latest.set(actor, {
+                  state: cmd,
+                  at: new Date(c.updated_at || c.created_at),
+                  user: c.user.login
+                });
+              }
+            }
+
             const missing = [];
             const rejected = [];
+            const passed = [];
             for (const need of REQUIRED) {
               const hit = latest.get(need.toLowerCase());
               if (!hit) { missing.push(need); continue; }
-              if (hit.state !== 'pass') rejected.push(`${need}(/驳回)`);
+              if (hit.state !== 'pass') rejected.push(need);
+              else passed.push(need);
             }
 
-            const summary = [
-              '## 必审人门禁（评论命令）',
+            const done = passed.length;
+            const total = REQUIRED.length;
+            const bar = '█'.repeat(done) + '░'.repeat(Math.max(0, total - done));
+
+            const progressBody = [
+              MARKER,
+              '## 必审进度',
               '',
-              `Head: \`${headSha.slice(0, 7)}\`（${headTime.toISOString()}）`,
-              author ? `已排除作者：@${pr.user.login}` : '',
+              `**${done} / ${total}** 已通过 \`${bar}\``,
               '',
-              '每人在 **PR 评论**单独一行发送：',
-              '- `/通过` — 同意当前 head',
-              '- `/驳回` — 反对（或撤回之前的通过）',
+              `Head: \`${headSha.slice(0, 7)}\``,
+              author ? `已排除作者（不可自审）：@${pr.user.login}` : '',
               '',
+              '| 必审人 | 状态 |',
+              '|--------|------|',
+              ...REQUIRED.map(u => {
+                const hit = latest.get(u.toLowerCase());
+                let st = '⏳ 待 `/通过`';
+                if (hit?.state === 'pass') st = '✅ 已通过';
+                if (hit?.state === 'fail') st = '❌ 已驳回';
+                return `| @${u} | ${st} |`;
+              }),
+              '',
+              '---',
+              '在本 PR **评论单独一行**发送：`/通过` 或 `/驳回`',
               '同义：`/approve` `/lgtm` ≈ 通过；`/reject` `/changes` ≈ 驳回。',
               '**新 push 后旧票作废**，须重新 `/通过`。',
               '',
-              '当前状态：',
-              ...REQUIRED.map(u => {
-                const hit = latest.get(u.toLowerCase());
-                const st = !hit ? '⏳ 待 `/通过`' : (hit.state === 'pass' ? '✅ 已通过' : '❌ 已驳回');
-                return `- @${u} — ${st}`;
-              }),
+              '_本条由机器人维护，请勿手动编辑。_',
             ].filter(Boolean).join('\n');
-            await core.summary.addRaw(summary).write();
+
+            try {
+              const prev = comments.find(c => (c.body || '').includes(MARKER));
+              if (prev) {
+                await github.rest.issues.updateComment({
+                  owner, repo, comment_id: prev.id, body: progressBody
+                });
+              } else {
+                await github.rest.issues.createComment({
+                  owner, repo, issue_number: pull_number, body: progressBody
+                });
+              }
+            } catch (e) {
+              core.warning(`Progress sticky skipped (${e.status || e.message})`);
+            }
+
+            await core.summary.addRaw(progressBody).write();
 
             if (missing.length || rejected.length) {
               const detail = [
                 missing.length ? `未 /通过：${missing.map(u => '@' + u).join(', ')}` : '',
-                rejected.length ? `已驳回：${rejected.join(', ')}` : '',
+                rejected.length ? `已驳回：${rejected.map(u => '@' + u).join(', ')}` : '',
               ].filter(Boolean).join('；');
               core.setFailed(detail);
               return;
