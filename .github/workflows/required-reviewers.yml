@@ -1,14 +1,13 @@
 name: Required reviewers (all must approve)
 
-# 强制：必审人全部 Approve 后本检查才绿。
-# PR 作者若在名单内会被排除（GitHub 不允许自我 Approve）。
-# pull_request_target：始终用 main 上的定义；可 requestReviewers。
-# 状态写在 Check / Job Summary，不往 PR 时间线刷「必审人门禁」评论（合并区看卡片即可）。
+# 必审人在 PR 评论单独一行发 `/通过`（全员通过后门禁绿）。
+# `/驳回` 可撤回或反对。作者自动排除；新 push 后须对当前 head 重新 `/通过`。
+# 状态写在 Check / Job Summary，不刷屏 sticky。
 on:
   pull_request_target:
     types: [opened, synchronize, reopened, ready_for_review]
-  pull_request_review:
-    types: [submitted, dismissed, edited]
+  issue_comment:
+    types: [created, edited]
 
 permissions:
   contents: read
@@ -16,40 +15,50 @@ permissions:
   issues: write
   checks: write
   statuses: write
+  reactions: write
 
 jobs:
   all-reviewers:
     runs-on: ubuntu-latest
     steps:
-      - name: Verify every required reviewer approved
+      - name: Verify every required reviewer posted /通过
         uses: actions/github-script@v7
         with:
           script: |
             const REQUIRED_ALL = ['hongwei-2026', 'hl019', 'Jerrybao99', 'likexin105'];
+            const PASS = new Set(['通过', 'approve', 'lgtm', 'ack']);
+            const FAIL = new Set(['驳回', 'reject', 'changes', 'deny']);
+
             const owner = context.repo.owner;
             const repo = context.repo.repo;
-            const pull_number =
-              context.payload.pull_request?.number ||
-              context.payload.pull_request_review?.pull_request?.number;
+
+            let pull_number = context.payload.pull_request?.number || null;
+            if (!pull_number && context.payload.issue?.pull_request) {
+              pull_number = context.payload.issue.number;
+            }
             if (!pull_number) {
-              core.setFailed('No pull request in event payload');
+              core.info('Not a pull request event — skip');
               return;
             }
 
             const { data: pr } = await github.rest.pulls.get({ owner, repo, pull_number });
-            const headSha = pr.head.sha;
-            const author = (pr.user?.login || '').toLowerCase();
-
-            const REQUIRED = REQUIRED_ALL.filter(u => u.toLowerCase() !== author);
-            if (REQUIRED.length < REQUIRED_ALL.length) {
-              core.info(`Excluded PR author @${pr.user.login} (cannot self-approve).`);
-            }
-            if (!REQUIRED.length) {
-              core.setFailed('No required reviewers left after excluding author — check REQUIRED list.');
+            if (pr.state !== 'open') {
+              core.info('PR not open — skip');
               return;
             }
 
-            // 让合并区出现「pending reviews」卡片（排除作者）
+            const headSha = pr.head.sha;
+            const author = (pr.user?.login || '').toLowerCase();
+            const REQUIRED = REQUIRED_ALL.filter(u => u.toLowerCase() !== author);
+            if (REQUIRED.length < REQUIRED_ALL.length) {
+              core.info(`Excluded PR author @${pr.user.login} (cannot self-pass).`);
+            }
+            if (!REQUIRED.length) {
+              core.setFailed('No required reviewers left after excluding author.');
+              return;
+            }
+
+            // 合并区 pending reviews（排除作者）
             try {
               await github.rest.pulls.requestReviewers({
                 owner, repo, pull_number, reviewers: REQUIRED
@@ -58,45 +67,111 @@ jobs:
               core.warning(`requestReviewers skipped: ${e.status || e.message}`);
             }
 
-            const reviews = await github.paginate(github.rest.pulls.listReviews, {
-              owner, repo, pull_number, per_page: 100
+            const { data: commit } = await github.rest.repos.getCommit({
+              owner, repo, ref: headSha
             });
-            const latest = new Map();
-            for (const r of reviews) {
-              const login = r.user?.login;
-              if (!login) continue;
-              latest.set(login.toLowerCase(), { state: r.state, user: login });
+            const headTime = new Date(
+              commit.commit.committer?.date || commit.commit.author?.date
+            );
+
+            const parseCmd = (body) => {
+              const lines = (body || '').split(/\r?\n/).map(l => l.trim()).filter(Boolean);
+              for (const line of lines) {
+                const m = line.match(/^\/(通过|驳回|approve|lgtm|ack|reject|changes|deny)\b/i);
+                if (!m) continue;
+                const key = m[1].toLowerCase();
+                if (PASS.has(key) || key === '通过') return 'pass';
+                if (FAIL.has(key) || key === '驳回') return 'fail';
+              }
+              return null;
+            };
+
+            // 若本事件是评论：给作者乱发 /通过 一个提示；给有效命令加 reaction
+            if (context.eventName === 'issue_comment') {
+              const c = context.payload.comment;
+              const actor = (c.user?.login || '').toLowerCase();
+              const cmd = parseCmd(c.body);
+              if (cmd) {
+                if (actor === author) {
+                  try {
+                    await github.rest.issues.createComment({
+                      owner, repo, issue_number: pull_number,
+                      body: `⛔ @${c.user.login} 是本 PR 作者，不能给自己 \`/通过\`。请其余必审人评论。`
+                    });
+                  } catch (_) {}
+                } else if (!REQUIRED_ALL.map(u => u.toLowerCase()).includes(actor)) {
+                  try {
+                    await github.rest.issues.createComment({
+                      owner, repo, issue_number: pull_number,
+                      body: `⛔ @${c.user.login} 不在必审名单，\`/${cmd === 'pass' ? '通过' : '驳回'}\` 不计入门禁。`
+                    });
+                  } catch (_) {}
+                } else {
+                  try {
+                    await github.rest.reactions.createForIssueComment({
+                      owner, repo, comment_id: c.id, content: cmd === 'pass' ? '+1' : '-1'
+                    });
+                  } catch (_) {}
+                }
+              }
+            }
+
+            const comments = await github.paginate(github.rest.issues.listComments, {
+              owner, repo, issue_number: pull_number, per_page: 100
+            });
+
+            // 每人最新一票；仅统计 head 提交时间之后的评论（新 push 需重投）
+            const latest = new Map(); // loginLower -> { state, at, user }
+            for (const c of comments) {
+              const login = c.user?.login;
+              if (!login || login.endsWith('[bot]')) continue;
+              const cmd = parseCmd(c.body);
+              if (!cmd) continue;
+              const at = new Date(c.updated_at || c.created_at);
+              if (at < headTime) continue; // 旧 head 上的票作废
+              const key = login.toLowerCase();
+              const prev = latest.get(key);
+              if (!prev || at >= prev.at) {
+                latest.set(key, { state: cmd, at, user: login });
+              }
             }
 
             const missing = [];
-            const bad = [];
+            const rejected = [];
             for (const need of REQUIRED) {
               const hit = latest.get(need.toLowerCase());
               if (!hit) { missing.push(need); continue; }
-              if (hit.state !== 'APPROVED') bad.push(`${need}(${hit.state})`);
+              if (hit.state !== 'pass') rejected.push(`${need}(/驳回)`);
             }
 
             const summary = [
-              '## 必审人门禁',
+              '## 必审人门禁（评论命令）',
               '',
-              `Head: \`${headSha.slice(0, 7)}\``,
+              `Head: \`${headSha.slice(0, 7)}\`（${headTime.toISOString()}）`,
               author ? `已排除作者：@${pr.user.login}` : '',
               '',
-              '需要 Approve：',
+              '每人在 **PR 评论**单独一行发送：',
+              '- `/通过` — 同意当前 head',
+              '- `/驳回` — 反对（或撤回之前的通过）',
+              '',
+              '同义：`/approve` `/lgtm` ≈ 通过；`/reject` `/changes` ≈ 驳回。',
+              '**新 push 后旧票作废**，须重新 `/通过`。',
+              '',
+              '当前状态：',
               ...REQUIRED.map(u => {
                 const hit = latest.get(u.toLowerCase());
-                const st = hit ? hit.state : 'PENDING';
-                return `- @${u} — **${st}**`;
+                const st = !hit ? '⏳ 待 `/通过`' : (hit.state === 'pass' ? '✅ 已通过' : '❌ 已驳回');
+                return `- @${u} — ${st}`;
               }),
             ].filter(Boolean).join('\n');
             await core.summary.addRaw(summary).write();
 
-            if (missing.length || bad.length) {
+            if (missing.length || rejected.length) {
               const detail = [
-                missing.length ? `未 Approve：${missing.map(u => '@' + u).join(', ')}` : '',
-                bad.length ? `非 APPROVED：${bad.join(', ')}` : '',
+                missing.length ? `未 /通过：${missing.map(u => '@' + u).join(', ')}` : '',
+                rejected.length ? `已驳回：${rejected.join(', ')}` : '',
               ].filter(Boolean).join('；');
-              core.setFailed(detail || 'Required reviewers have not all APPROVED yet.');
+              core.setFailed(detail);
               return;
             }
-            core.info('All required reviewers approved.');
+            core.info('All required reviewers posted /通过 for current head.');

@@ -18,7 +18,7 @@
                     │
                     ├─ CI（仓库级 verify_* / 密钥 / bandit）
                     ├─ Task PR gate（verify + 自动审核清单评论）
-                    ├─ Required reviewers（四人全 Approve）
+                    ├─ Required reviewers（必审人全员 PR 评论 `/通过`）
                     └─ Task stale auto-release（每天：关联 PR >30 天无更新 → 自动释放）
 ```
 
@@ -35,6 +35,8 @@
 
 | 命令 | 位置 | 作用 |
 |------|------|------|
+| `/通过` `/approve` `/lgtm` | **PR 评论**单独一行 | 必审人同意当前 head（全员通过后门禁绿） |
+| `/驳回` `/reject` `/changes` | **PR 评论**单独一行 | 必审人反对或撤回通过 |
 | `/recheck` `/rerun` `/rerun-checks` | **PR 评论**单独一行 | 重跑 Enterprise PR 套件 |
 | `/claim` `/accept` `/cancel` `/score` | **Issue 评论** | 任务板（见 task-board.yml） |
 
@@ -42,9 +44,9 @@
 
 | 情况 | 行为 |
 |------|------|
-| 必审人是 PR 作者 | `all-reviewers` **自动排除作者**；其余必审人 Approve 即可 |
-| Fork 来的 PR | AI 清单走 `pull_request_target`（会评论且 sticky 更新）；`gate` 只做校验不刷屏 |
-| 合并区样式 | 看 GitHub 底部卡片（Checks / Update branch / 未解决对话），不靠 bot 刷「必审人」评论 |
+| 必审人是 PR 作者 | 作者不能 `/通过` 自己；其余必审人发 `/通过` |
+| Fork 来的 PR | AI 清单走 `pull_request_target`；`gate` 只做校验不刷屏 |
+| 合并区样式 | 看 GitHub 底部卡片；必审状态在 Check Summary |
 
 ## 停滞自动释放（30 天）
 
