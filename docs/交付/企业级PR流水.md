@@ -42,8 +42,9 @@
 
 | 情况 | 行为 |
 |------|------|
-| 必审人是 PR 作者 | `Required reviewers` **自动排除作者**（无法自我 Approve） |
-| Fork 来的 PR | `all-reviewers` 走 `pull_request_target`；`gate` 仍走 `pull_request`（校验 PR 代码），评论 403 只警告。fork 过旧时 maintainer **Update branch** |
+| 必审人是 PR 作者 | `all-reviewers` **自动排除作者**；其余必审人 Approve 即可 |
+| Fork 来的 PR | AI 清单走 `pull_request_target`（会评论且 sticky 更新）；`gate` 只做校验不刷屏 |
+| 合并区样式 | 看 GitHub 底部卡片（Checks / Update branch / 未解决对话），不靠 bot 刷「必审人」评论 |
 
 ## 停滞自动释放（30 天）
 
